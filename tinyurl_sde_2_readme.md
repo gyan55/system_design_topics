@@ -24,10 +24,6 @@ The service should:
 Optional follow-ups:
 - custom alias,
 - expiration time,
-- analytics / click tracking,
-- abuse detection,
-- user accounts.
-
 ---
 
 ## 2. Clarify requirements in interview
@@ -37,13 +33,6 @@ A strong SDE 2 answer starts by scoping the problem.
 - Create a short URL for a given long URL
 - Redirect short URL to long URL
 
-### Optional requirements
-- Custom alias
-- Expiry / TTL
-- Analytics
-- Delete / disable link
-- Same long URL returns same short URL or new short URL every time
-
 ### Non-functional requirements
 - High availability
 - Low redirect latency
@@ -52,7 +41,7 @@ A strong SDE 2 answer starts by scoping the problem.
 - Scalability
 
 ### Good interview line
-> I’ll first design the core system for shorten + redirect, then extend it for analytics, expiration, and custom aliases if time permits.
+> I’ll first design the core system for shorten + redirect, then extend it for expiration, and custom aliases if time permits.
 
 ---
 
@@ -391,9 +380,6 @@ Pros:
 
 ---
 
-## 17. Click analytics
-Do **not** update analytics synchronously in the redirect path at high scale.
-
 ### Better approach
 - return redirect immediately
 - publish click event asynchronously
@@ -426,20 +412,11 @@ A TinyURL-like service is user-facing and should be highly available.
 - load balancer
 - replicated cache
 - replicated DB / failover
-- backups
-- monitoring and alerts
 
 ### Good interview sentence
 > I’d keep app servers stateless so they can scale horizontally and fail independently, and I’d replicate the mapping store to improve availability of the read path.
 
 ---
-
-## 19. Abuse and security considerations
-In production, the service can be abused for:
-- spam,
-- phishing,
-- malicious redirects,
-- automated link creation.
 
 ### Mitigations
 - rate limiting on link creation
@@ -550,14 +527,7 @@ Be ready for:
 
 ---
 
-## 27. Revision notes
-### One-line takeaway
-TinyURL is a **read-heavy key-lookup system** where the most important design choices are:
-- short-code generation,
-- fast redirect path,
-- durable mapping storage,
-- caching,
-- sharding by short code.
+
 
 ### Memory hooks
 - **Read-heavy system**
