@@ -1,0 +1,522 @@
+# SDE 2 System Design Notes — Notification System
+
+## Why this question is asked
+
+This question tests whether you can design an **event-driven, multi-channel, high-fan-out system** with good separation of concerns.
+
+At SDE 2 level, interviewers want to see that you can:
+
+* separate business events from notification delivery,
+* design asynchronous pipelines,
+* handle retries and duplicate prevention,
+* model user preferences and channel routing,
+* discuss tradeoffs around reliability, latency, and spam prevention.
+
+---
+
+## 1. Problem statement
+
+Design a notification system that supports:
+
+* email
+* SMS
+* push notifications
+* in-app notifications
+
+The system should:
+
+* consume product/business events,
+* decide whether a user should be notified,
+* send notifications through the right channels,
+* support retries, delivery status, and user preferences,
+* scale to large fan-out scenarios.
+
+---
+
+## 2. How to scope it in interview
+
+### Functional requirements
+
+* Receive events from producer services
+* Support multiple channels: email, SMS, push, in-app
+* Respect user notification preferences
+* Deliver notifications asynchronously
+* Track delivery status
+
+### Optional follow-ups
+
+* batching / digests
+* quiet hours
+* priority notifications
+* fallback channels
+* localization / templates
+* analytics
+
+### Non-functional requirements
+
+* high availability
+* low latency for time-sensitive notifications
+* eventual delivery for durable channels
+* idempotency / duplicate prevention
+* rate limiting / anti-spam controls
+* observability
+
+### Good opening line
+
+> I’ll first design the core asynchronous multi-channel notification pipeline, then extend it for preferences, retries, priority, and spam prevention.
+
+---
+
+## 3. Key insight
+
+This is an **event-driven system**, not a direct request-response system.
+
+The core flow is:
+
+```text
+Business Event -> Notification Orchestrator -> Channel-specific Delivery
+```
+
+Examples of producer events:
+
+* `order_shipped`
+* `payment_failed`
+* `new_message_received`
+* `security_alert`
+* `post_liked`
+
+The notification system should usually not block the core business flow.
+
+---
+
+## 4. High-level architecture
+
+```text
+Producer Services
+(Order, Payment, Chat, Social)
+          |
+          v
+   Event Bus / Queue
+          |
+          v
+ Notification Orchestrator
+          |
+   -----------------------------
+   |        |        |         |
+   v        v        v         v
+Email    Push      SMS      In-app
+Worker   Worker    Worker   Worker
+   |        |        |         |
+   v        v        v         v
+Provider  APNs/FCM  SMS GW   Notification DB
+```
+
+### Component responsibilities
+
+* **Producer services**: emit business events
+* **Event bus / queue**: decouple producers from delivery
+* **Notification Orchestrator**: apply rules, preferences, templates, and create jobs
+* **Channel workers**: send via email, SMS, push, or store in-app records
+* **Notification DB**: store in-app notifications and delivery metadata
+
+---
+
+## 5. Real-world examples
+
+### E-commerce
+
+Event: `order_shipped`
+
+* email confirmation
+* push update
+* in-app order status
+
+### Chat app
+
+Event: `new_message_received`
+
+* push if user is offline
+* in-app update if user is active
+* maybe email only if user is inactive for long time
+
+### Fintech / banking
+
+Event: `suspicious_login_detected`
+
+* urgent push
+* email
+* SMS fallback for critical alert
+
+These examples show that notifications are not just “send a message.” They are policy-driven and channel-aware.
+
+---
+
+## 6. Core design idea: orchestrator + channel workers
+
+### Notification Orchestrator
+
+This is the decision engine.
+
+It should:
+
+* consume business events,
+* look up user preferences,
+* apply notification rules,
+* choose channels,
+* render template payload,
+* create delivery jobs.
+
+### Why separate channel workers?
+
+Each channel has different behavior:
+
+* **Email**: templates, bulk send, bounces
+* **SMS**: cost-sensitive, short payload, stricter rate limits
+* **Push**: device tokens, APNs/FCM, token invalidation
+* **In-app**: durable storage, unread counts, history
+
+### Strong interview line
+
+> I’d isolate delivery by channel because each channel has different providers, payload constraints, retry semantics, and failure modes.
+
+---
+
+## 7. Core data model
+
+### Event
+
+```text
+event_id
+event_type
+recipient_id
+payload
+created_at
+```
+
+### Notification Job
+
+```text
+job_id
+event_id
+recipient_id
+channel
+status
+priority
+scheduled_at
+retry_count
+template_id
+provider_response
+```
+
+### User Preferences
+
+```text
+user_id
+notification_type
+channel
+enabled
+quiet_hours
+language
+frequency_mode
+```
+
+### In-app Notification
+
+```text
+notification_id
+recipient_id
+title
+body
+status (unread/read)
+created_at
+```
+
+---
+
+## 8. End-to-end flow
+
+```text
+1. Business service emits event
+2. Orchestrator consumes event
+3. Orchestrator checks user preferences and rules
+4. Orchestrator creates channel-specific jobs
+5. Channel workers process jobs asynchronously
+6. Provider returns success/failure
+7. System updates status and retries if needed
+8. In-app notifications are stored for retrieval
+```
+
+This is the main flow you should explain clearly in an interview.
+
+---
+
+## 9. Why asynchronous delivery matters
+
+Notifications should usually be asynchronous.
+
+### Why?
+
+* do not slow down the core business action
+* isolate notification-provider failures from product workflows
+* absorb spikes with queues
+* scale workers independently
+
+### Good interview sentence
+
+> Sending notifications should not block critical user flows like checkout or message send, so I’d make delivery asynchronous through a durable queue.
+
+---
+
+## 10. User preferences and policy rules
+
+A notification system is also a **policy engine**.
+
+Examples:
+
+* user disabled marketing emails
+* mute notifications for a conversation
+* do not send SMS during quiet hours
+* if user is online, suppress push
+* send digest instead of immediate low-priority notifications
+
+### Strong interview line
+
+> The notification system is not just a sender; it decides whether, when, and through which channel to notify a user.
+
+---
+
+## 11. Idempotency and duplicate prevention
+
+This is one of the most important SDE 2 points.
+
+Duplicates happen because of:
+
+* queue redelivery
+* retries
+* producer retries
+* worker crash after partial progress
+
+### Solution
+
+* use `event_id` as idempotency key
+* dedupe before creating delivery jobs
+* make channel workers idempotent
+
+### Good interview sentence
+
+> Since this pipeline is asynchronous and retry-heavy, I’d assume at-least-once internal delivery and make the orchestrator and channel workers idempotent.
+
+---
+
+## 12. Retry strategy
+
+Providers fail sometimes.
+
+### Retryable failures
+
+* timeout
+* transient 5xx
+* provider throttling
+
+### Non-retryable failures
+
+* invalid email
+* invalid phone number
+* invalid push token
+* malformed payload
+
+### Good approach
+
+* exponential backoff
+* bounded retries
+* dead-letter queue for persistent failure
+
+### Strong interview line
+
+> Retries should be channel-aware and bounded, otherwise the notification system can amplify provider failures and create user spam.
+
+---
+
+## 13. In-app notifications
+
+In-app is different from external delivery channels because it is also a **read path**.
+
+Typical APIs:
+
+* list notifications
+* unread count
+* mark as read
+
+This means in-app notifications need durable storage indexed by user.
+
+### Strong SDE 2 point
+
+> I’d store in-app notifications separately as user-queryable records, because unlike email or SMS, they are not just delivery attempts but part of the product experience.
+
+---
+
+## 14. Priority and rate limiting
+
+Not all notifications should be treated the same.
+
+### Priority examples
+
+* critical: OTP, fraud alert, security event
+* transactional: order shipped, payment failed
+* social: likes, comments
+* promotional: offers, reminders
+
+### Rate limiting helps prevent
+
+* user spam
+* noisy product bugs
+* provider quota exhaustion
+* notification storms
+
+### Good interview sentence
+
+> I’d classify notifications by priority and also apply per-user and per-channel rate limits so critical traffic is protected while low-value traffic is suppressed under load.
+
+---
+
+## 15. Failure isolation
+
+If one provider is unhealthy, the whole system should not stall.
+
+Example:
+
+* SMS provider is down
+* email and in-app should still work
+
+### Design choice
+
+* separate queues per channel
+* separate worker pools per channel
+* independent retry behavior
+
+### Strong interview line
+
+> I’d isolate queues and workers by channel so a provider issue in one channel degrades that channel only instead of taking down the entire notification pipeline.
+
+---
+
+## 16. Storage choices
+
+### Notification jobs / delivery state
+
+Use relational DB or scalable KV/document store.
+
+### In-app notification history
+
+Partition by recipient/user ID.
+
+### Event bus
+
+Kafka / SQS / PubSub-style queue.
+
+### Templates
+
+Stored separately in config/template store.
+
+### Good design sentence
+
+> I’d separate operational delivery state, user-facing in-app history, and analytics because they have different access patterns and retention requirements.
+
+---
+
+## 17. Observability
+
+A production notification system needs strong visibility.
+
+Track:
+
+* events consumed/sec
+* jobs created/sec
+* per-channel success rate
+* retry rate
+* queue lag
+* dead-letter queue size
+* provider latency
+* duplicate suppression count
+
+### Strong interview sentence
+
+> Because the system is asynchronous and distributed, I’d make event IDs traceable end-to-end across orchestration and delivery workers.
+
+---
+
+## 18. Security and privacy
+
+Important real-world considerations:
+
+* protect PII in logs
+* secure provider credentials
+* support opt-in / consent rules
+* avoid exposing notification history without auth
+* mask sensitive message content where needed
+
+Even mentioning this briefly improves the answer.
+
+---
+
+## 19. Strong SDE 2 answer structure
+
+In the interview, answer in this order:
+
+1. clarify scope and channels
+2. identify system as event-driven
+3. propose producer -> queue -> orchestrator -> channel workers
+4. explain user preferences and policy rules
+5. explain retries and idempotency
+6. explain in-app storage and read path
+7. explain rate limiting, priority, and failure isolation
+8. cover observability and security
+
+This is enough depth for a strong SDE 2 answer.
+
+---
+
+## 20. Sample polished SDE 2 answer
+
+> I’d design the notification system as an asynchronous event-driven pipeline. Business services such as order, payment, chat, or social services would publish events like `order_shipped` or `new_message_received` to a durable queue. A notification orchestrator would consume those events, check user preferences and notification rules, decide which channels should be used, render the appropriate templates, and create channel-specific delivery jobs.
+>
+> I’d keep delivery workers separate for email, SMS, push, and in-app notifications because each channel has different providers, payload constraints, retry behavior, and cost characteristics. Since the system is retry-heavy, I’d assume at-least-once internal delivery and use event IDs or idempotency keys to prevent duplicate user notifications. In-app notifications would also be stored in a user-queryable store so clients can fetch history and unread counts. For resilience, retries would be bounded and channel-aware, and I’d isolate queues by channel so a provider failure in SMS does not block email or push. I’d also add rate limiting, suppression rules, and observability to protect both downstream providers and the user experience.
+
+---
+
+## 21. Common mistakes
+
+* Treating notifications as synchronous sends
+* Not separating orchestration from delivery
+* Ignoring user preferences
+* Ignoring duplicate prevention
+* No retry classification
+* No per-channel isolation
+* Forgetting in-app read path
+* No rate limiting or spam prevention
+
+---
+
+## 22. Quick revision cheatsheet
+
+```text
+Problem type: Event-driven multi-channel delivery system
+Core flow: producer -> queue -> orchestrator -> channel workers
+Hard parts:
+- user preferences
+- retries and idempotency
+- channel-specific delivery behavior
+- in-app storage
+- spam prevention / rate limiting
+- observability
+Strong SDE 2 signals:
+- async delivery
+- per-channel isolation
+- idempotent processing
+- policy engine mindset
+- queue lag / success rate monitoring
+```
+
+## One-line takeaway
+
+A notification system is an **event-driven policy, orchestration, and delivery platform** — not just a sender.
